@@ -56,36 +56,29 @@ def verify_payment():
 def send_message():
     data = request.get_json()
 
-    # -----------------------------
-    # Honeypot spam detection
-    # -----------------------------
-    if data.get("hp_field"):  
-        return jsonify({"success": True})   # silently ignore spam
-
-    # Extract details
     name = data.get("name")
     email = data.get("email")
     phone = data.get("phone")
     subject = data.get("subject")
     message = data.get("message")
 
-    # Build email body
     full_message = f"""
-New message received from Mehta Masala Contact Page:
+    New message received from Mehta Masala Contact Page:
 
-Name: {name}
-Email: {email}
-Phone: {phone}
-Subject: {subject}
+    Name: {name}
+    Email: {email}
+    Phone: {phone}
+    Subject: {subject}
 
-Message:
-{message}
-"""
+    Message:
+    {message}
+    """
 
-    # Gmail credentials
-    sender_email = "masalamehta@gmail.com"
-    receiver_email = "masalamehta@gmail.com"
-    password = "awbfzkmolwtwcddj"   # your Gmail App Password
+    # ----------- EMAIL SETTINGS --------------
+    import os
+    sender_email = os.environ.get("SMTP_SENDER") or "masalamehta@gmail.com"
+    receiver_email = os.environ.get("SMTP_RECEIVER") or "masalamehta@gmail.com"
+    password = os.environ.get("SMTP_APP_PASSWORD")  # <-- no plaintext password
 
     try:
         msg = MIMEMultipart()
@@ -105,7 +98,6 @@ Message:
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
-
 
 # -------------------------------------------------
 # RUN SERVER
