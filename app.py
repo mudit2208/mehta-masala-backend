@@ -13,7 +13,7 @@ CORS(app)
 # -------------------------------------------------
 @app.route("/")
 def home():
-    return jsonify({"message": "Backend LIVE — Updated"})
+    return jsonify({"message": "Backend updated successfully!"})
 
 
 # -------------------------------------------------
