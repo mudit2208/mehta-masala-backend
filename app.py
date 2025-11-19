@@ -81,19 +81,19 @@ def send_message():
     password = os.environ.get("SMTP_APP_PASSWORD")  # <-- no plaintext password
 
     try:
-    msg = MIMEMultipart()
-    msg["From"] = sender_email
-    msg["To"] = receiver_email
-    msg["Subject"] = f"New Contact Message — {subject}"
-    msg.attach(MIMEText(full_message, "plain"))
+        msg = MIMEMultipart()
+        msg["From"] = sender_email
+        msg["To"] = receiver_email
+        msg["Subject"] = f"New Contact Message — {subject}"
+        msg.attach(MIMEText(full_message, "plain"))
 
-    # Gmail secure SSL port
-    server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-    server.login(sender_email, password)
-    server.sendmail(sender_email, receiver_email, msg.as_string())
-    server.quit()
+        # Gmail secure SSL port
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(sender_email, password)
+        server.sendmail(sender_email, receiver_email, msg.as_string())
+        server.quit()
 
-    return jsonify({"success": True})
+        return jsonify({"success": True})
 
 
     except Exception as e:
