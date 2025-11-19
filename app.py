@@ -3,22 +3,31 @@ from flask_cors import CORS
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import csv
+from datetime import datetime
+from time import time
+import os
 
 app = Flask(__name__)
 CORS(app)
 
+# ================================
+# GLOBAL SPAM PROTECTION
+# ================================
+LAST_SENT = {}   # IP → timestamp
 
-# -------------------------------------------------
-# ROOT
-# -------------------------------------------------
+
+# ================================
+# ROOT ROUTE
+# ================================
 @app.route("/")
 def home():
-    return jsonify({"message": "Backend updated successfully!"})
+    return jsonify({"message": "Backend running — Contact form ready!"})
 
 
-# -------------------------------------------------
-# TEST MODE — CREATE ORDER (NO PAYMENT GATEWAY)
-# -------------------------------------------------
+# ================================
+# TEST MODE: CREATE ORDER (NO RAZORPAY)
+# ================================
 @app.route("/create-order", methods=["POST"])
 def create_order():
     data = request.get_json()
@@ -26,34 +35,97 @@ def create_order():
     if not data or "amount" not in data:
         return jsonify({"error": "Amount is required"}), 400
 
-    amount = int(data["amount"])
-
     fake_order = {
         "id": "test_order_12345",
-        "amount": amount * 100,
+        "amount": int(data["amount"]) * 100,
         "currency": "INR",
         "status": "created"
     }
 
-    return jsonify({
-        "success": True,
-        "order": fake_order
-    })
+    return jsonify({"success": True, "order": fake_order})
 
 
-# -------------------------------------------------
-# TEST MODE — VERIFY PAYMENT (ALWAYS SUCCESS)
-# -------------------------------------------------
+# ================================
+# TEST MODE: VERIFY PAYMENT
+# ================================
 @app.route("/verify-payment", methods=["POST"])
 def verify_payment():
     return jsonify({"success": True, "message": "Payment verified (TEST MODE)"})
 
 
-# -------------------------------------------------
-# CONTACT FORM — WITH HONEYPOT PROTECTION
-# -------------------------------------------------
+# ================================
+# EMAIL SETTINGS (from Render ENV variables)
+# ================================
+EMAIL_USER = os.environ.get("SMTP_SENDER")
+EMAIL_PASS = os.environ.get("SMTP_APP_PASSWORD")
+
+
+# ================================
+# SEND EMAIL FUNCTION
+# ================================
+def send_email(name, email, phone, subject, message):
+    receiver = EMAIL_USER
+    cc_email = EMAIL_USER  # send copy to yourself
+
+    html_body = f"""
+    <html>
+    <body style="font-family: Arial; padding: 20px;">
+        <h2 style="color:#2C7A52;">New Contact Form Message</h2>
+
+        <p><strong>Name:</strong> {name}</p>
+        <p><strong>Email:</strong> {email}</p>
+        <p><strong>Phone:</strong> {phone}</p>
+        <p><strong>Subject:</strong> {subject}</p>
+
+        <p><strong>Message:</strong><br>{message}</p>
+
+        <hr>
+        <p style="color:#777;font-size:13px;">
+            Submitted via Mehta Masala Website.
+        </p>
+    </body>
+    </html>
+    """
+
+    msg = MIMEMultipart()
+    msg["From"] = EMAIL_USER
+    msg["To"] = receiver
+    msg["Cc"] = cc_email
+    msg["Subject"] = f"New Message — {subject}"
+    msg.attach(MIMEText(html_body, "html"))
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.sendmail(EMAIL_USER, [receiver, cc_email], msg.as_string())
+
+
+# ================================
+# CSV LOGGING
+# ================================
+def log_to_csv(name, email, phone, subject, message):
+    with open("contact_logs.csv", "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            name, email, phone, subject, message
+        ])
+
+
+# ================================
+# CONTACT FORM ROUTE
+# ================================
 @app.route("/send-message", methods=["POST"])
 def send_message():
+    global LAST_SENT
+    ip = request.remote_addr
+    now = time()
+
+    # rate limit 1 request per 30 sec
+    if ip in LAST_SENT and now - LAST_SENT[ip] < 30:
+        return jsonify({"success": False, "error": "Wait 30 sec before sending again"}), 429
+
+    LAST_SENT[ip] = now
+
     data = request.get_json()
 
     name = data.get("name")
@@ -61,48 +133,25 @@ def send_message():
     phone = data.get("phone")
     subject = data.get("subject")
     message = data.get("message")
+    honeypot = data.get("hp_field")
 
-    # Honeypot bot protection
-    if data.get("hp_field"):
+    # Bot detection (honeypot)
+    if honeypot:
         return jsonify({"success": True})
 
-    full_message = f"""
-    New message received from Mehta Masala Contact Page:
+    # Save CSV
+    log_to_csv(name, email, phone, subject, message)
 
-    Name: {name}
-    Email: {email}
-    Phone: {phone}
-    Subject: {subject}
-
-    Message:
-    {message}
-    """
-
-    # Email Settings from environment variables
-    import os
-    sender_email = os.environ.get("SMTP_SENDER") or "masalamehta@gmail.com"
-    receiver_email = os.environ.get("SMTP_RECEIVER") or "masalamehta@gmail.com"
-    password = os.environ.get("SMTP_APP_PASSWORD")
-
+    # Send email
     try:
-        msg = MIMEMultipart()
-        msg["From"] = sender_email
-        msg["To"] = receiver_email
-        msg["Subject"] = f"New Contact Message — {subject}"
-        msg.attach(MIMEText(full_message, "plain"))
-
-        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-        server.login(sender_email, password)
-        server.sendmail(sender_email, receiver_email, msg.as_string())
-        server.quit()
-
+        send_email(name, email, phone, subject, message)
         return jsonify({"success": True})
-
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
-# -------------------------------------------------
-# RUN SERVER
-# -------------------------------------------------
+
+# ================================
+# RUN SERVER (local only)
+# ================================
 if __name__ == "__main__":
     app.run(debug=True)
