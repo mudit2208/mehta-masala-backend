@@ -78,7 +78,7 @@ def send_message():
     import os
     sender_email = os.environ.get("SMTP_SENDER") or "masalamehta@gmail.com"
     receiver_email = os.environ.get("SMTP_RECEIVER") or "masalamehta@gmail.com"
-    password = os.environ.get("SMTP_APP_PASSWORD")  # <-- no plaintext password
+    password = os.environ.get("SMTP_APP_PASSWORD")
 
     try:
         msg = MIMEMultipart()
@@ -94,7 +94,6 @@ def send_message():
         server.quit()
 
         return jsonify({"success": True})
-
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
