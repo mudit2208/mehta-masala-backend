@@ -62,6 +62,10 @@ def send_message():
     subject = data.get("subject")
     message = data.get("message")
 
+    # Honeypot bot protection
+    if data.get("hp_field"):
+        return jsonify({"success": True})
+
     full_message = f"""
     New message received from Mehta Masala Contact Page:
 
@@ -74,7 +78,7 @@ def send_message():
     {message}
     """
 
-    # ----------- EMAIL SETTINGS --------------
+    # Email Settings from environment variables
     import os
     sender_email = os.environ.get("SMTP_SENDER") or "masalamehta@gmail.com"
     receiver_email = os.environ.get("SMTP_RECEIVER") or "masalamehta@gmail.com"
@@ -87,7 +91,6 @@ def send_message():
         msg["Subject"] = f"New Contact Message — {subject}"
         msg.attach(MIMEText(full_message, "plain"))
 
-        # Gmail secure SSL port
         server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
         server.login(sender_email, password)
         server.sendmail(sender_email, receiver_email, msg.as_string())
