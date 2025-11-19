@@ -13,7 +13,7 @@ CORS(app)
 # -------------------------------------------------
 @app.route("/")
 def home():
-    return jsonify({"message": "Backend running — Test Mode (No Razorpay)"})
+    return jsonify({"message": "Backend LIVE — Updated"})
 
 
 # -------------------------------------------------
