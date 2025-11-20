@@ -7,7 +7,13 @@ import os
 import requests  # <-- for SendGrid API
 
 app = Flask(__name__)
-CORS(app)
+CORS(
+    app,
+    resources={r"/*": {"origins": "*"}},
+    supports_credentials=True,
+    allow_headers=["Content-Type"],
+    methods=["GET", "POST", "OPTIONS"]
+)
 
 # ================================
 # GLOBAL SPAM PROTECTION
