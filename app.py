@@ -30,6 +30,7 @@ RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET")
 razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 LAST_SENT = {}  # contact form spam protection
+ADMIN_DASHBOARD_KEY = os.environ.get("ADMIN_DASHBOARD_KEY", "MehtaMasalaAdmin2025")
 
 
 # ================================
@@ -62,6 +63,58 @@ def log_order_to_csv(order_id, customer, cart, total, payment_info):
             payment_info.get("razorpay_order_id"),
             payment_info.get("razorpay_payment_id")
         ])
+
+def load_orders_from_csv():
+    """
+    Read orders from orders.csv and return a list of dicts.
+    If file does not exist yet, return an empty list.
+    """
+    orders = []
+    if not os.path.exists("orders.csv"):
+        return orders
+
+    try:
+        with open("orders.csv", "r", newline="") as f:
+            reader = csv.reader(f)
+            for row in reader:
+                # row format:
+                # 0: timestamp
+                # 1: order_id
+                # 2: name
+                # 3: email
+                # 4: phone
+                # 5: address
+                # 6: city
+                # 7: pincode
+                # 8: total
+                # 9: payment_method
+                # 10: payment_status
+                # 11: razorpay_order_id
+                # 12: razorpay_payment_id
+                if len(row) < 13:
+                    continue
+
+                orders.append({
+                    "created_at": row[0],
+                    "order_id": row[1],
+                    "name": row[2],
+                    "email": row[3],
+                    "phone": row[4],
+                    "address": row[5],
+                    "city": row[6],
+                    "pincode": row[7],
+                    "total": row[8],
+                    "payment_method": row[9],
+                    "payment_status": row[10],
+                    "razorpay_order_id": row[11],
+                    "razorpay_payment_id": row[12],
+                })
+    except Exception as e:
+        print("Error reading orders.csv:", e)
+
+    # newest first
+    orders.reverse()
+    return orders
 
 
 def send_sendgrid_email(to_emails, subject, html_body, attachments=None):
@@ -320,6 +373,19 @@ def verify_payment():
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 400
+
+@app.route("/admin/orders", methods=["GET"])
+def admin_get_orders():
+    """
+    Simple admin API endpoint to fetch all orders from CSV.
+    Protected by a query parameter ?key=ADMIN_DASHBOARD_KEY.
+    """
+    key = request.args.get("key")
+    if key != ADMIN_DASHBOARD_KEY:
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    orders = load_orders_from_csv()
+    return jsonify({"success": True, "orders": orders})
 
 
 # ----------------------------
