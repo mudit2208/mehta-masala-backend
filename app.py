@@ -286,9 +286,56 @@ def debug_db():
         "DB_PORT": os.environ.get("DB_PORT")
     }
 
+def initialize_database():
+    conn = get_db_connection()
+    if not conn:
+        print("Could not connect to DB at startup.")
+        return
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id SERIAL PRIMARY KEY,
+                order_id VARCHAR(50) NOT NULL,
+                customer_name TEXT,
+                customer_phone TEXT,
+                customer_address TEXT,
+                customer_city TEXT,
+                customer_pincode TEXT,
+                total_amount NUMERIC,
+                payment_status TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS order_items (
+                id SERIAL PRIMARY KEY,
+                order_ref INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+                slug TEXT,
+                name TEXT,
+                price NUMERIC,
+                weight TEXT,
+                quantity INTEGER,
+                image TEXT
+            );
+        """)
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("Database tables ensured.")
+
+    except Exception as e:
+        print("Error creating tables:", e)
+
+
 
 # ================================
 # RUN SERVER
 # ================================
 if __name__ == "__main__":
+    initialize_database()
     app.run(debug=True)
