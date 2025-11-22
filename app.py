@@ -17,6 +17,8 @@ CORS(
     methods=["GET", "POST", "OPTIONS"]
 )
 
+initialize_database()
+
 # ================================
 # DATABASE CONNECTION
 # ================================
@@ -337,5 +339,4 @@ def initialize_database():
 # RUN SERVER
 # ================================
 if __name__ == "__main__":
-    initialize_database()
     app.run(debug=True)
