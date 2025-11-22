@@ -17,8 +17,6 @@ CORS(
     methods=["GET", "POST", "OPTIONS"]
 )
 
-initialize_database()
-
 # ================================
 # DATABASE CONNECTION
 # ================================
@@ -36,6 +34,8 @@ def get_db_connection():
     except Exception as e:
         print(f"Database connection error: {e}")
         return None
+
+initialize_database()
 
 # ================================
 # GLOBAL SPAM PROTECTION
