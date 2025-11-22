@@ -64,14 +64,54 @@ def log_order_to_csv(order_id, customer, cart, total, payment_info):
             payment_info.get("razorpay_payment_id")
         ])
 
+STATUS_FILE = "order_status.csv"
+
+def load_order_statuses():
+    """
+    Read shipping statuses from order_status.csv
+    Returns dict: {order_id: status_str}
+    """
+    statuses = {}
+    if not os.path.exists(STATUS_FILE):
+        return statuses
+
+    try:
+        with open(STATUS_FILE, "r", newline="") as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) < 2:
+                    continue
+                oid, st = row[0], row[1]
+                statuses[oid] = st
+    except Exception as e:
+        print("Error reading order_status.csv:", e)
+
+    return statuses
+
+
+def save_order_statuses(statuses):
+    """
+    Overwrite order_status.csv with current statuses dict.
+    """
+    try:
+        with open(STATUS_FILE, "w", newline="") as f:
+            writer = csv.writer(f)
+            for oid, st in statuses.items():
+                writer.writerow([oid, st])
+    except Exception as e:
+        print("Error writing order_status.csv:", e)
+
+
 def load_orders_from_csv():
     """
-    Read orders from orders.csv and return a list of dicts.
-    If file does not exist yet, return an empty list.
+    Read orders from orders.csv and attach shipping_status from order_status.csv
     """
     orders = []
     if not os.path.exists("orders.csv"):
         return orders
+
+    # Load shipping statuses once
+    statuses = load_order_statuses()
 
     try:
         with open("orders.csv", "r", newline="") as f:
@@ -94,9 +134,12 @@ def load_orders_from_csv():
                 if len(row) < 13:
                     continue
 
+                oid = row[1]
+                shipping_status = statuses.get(oid, "Pending")
+
                 orders.append({
                     "created_at": row[0],
-                    "order_id": row[1],
+                    "order_id": oid,
                     "name": row[2],
                     "email": row[3],
                     "phone": row[4],
@@ -108,6 +151,7 @@ def load_orders_from_csv():
                     "payment_status": row[10],
                     "razorpay_order_id": row[11],
                     "razorpay_payment_id": row[12],
+                    "shipping_status": shipping_status,
                 })
     except Exception as e:
         print("Error reading orders.csv:", e)
@@ -386,6 +430,31 @@ def admin_get_orders():
 
     orders = load_orders_from_csv()
     return jsonify({"success": True, "orders": orders})
+
+@app.route("/admin/update-status", methods=["POST"])
+def admin_update_status():
+    """
+    Update shipping status for an order.
+    Body JSON: { key: ADMIN_DASHBOARD_KEY, order_id: "...", status: "Pending/Shipped/Delivered" }
+    """
+    data = request.get_json() or {}
+    key = data.get("key")
+    if key != ADMIN_DASHBOARD_KEY:
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    order_id = data.get("order_id")
+    new_status = data.get("status")
+
+    allowed_statuses = {"Pending", "Shipped", "Delivered"}
+    if not order_id or new_status not in allowed_statuses:
+        return jsonify({"success": False, "error": "Invalid order_id or status"}), 400
+
+    statuses = load_order_statuses()
+    statuses[order_id] = new_status
+    save_order_statuses(statuses)
+
+    return jsonify({"success": True})
+
 
 
 # ----------------------------
