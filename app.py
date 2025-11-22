@@ -277,6 +277,16 @@ def send_message():
         # Return error so we can see it while testing
         return jsonify({"success": False, "error": str(e)}), 500
 
+@app.route("/debug-db")
+def debug_db():
+    return {
+        "DB_HOST": os.environ.get("DB_HOST"),
+        "DB_NAME": os.environ.get("DB_NAME"),
+        "DB_USER": os.environ.get("DB_USER"),
+        "DB_PORT": os.environ.get("DB_PORT")
+    }
+
+
 # ================================
 # RUN SERVER
 # ================================
