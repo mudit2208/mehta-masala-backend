@@ -5,6 +5,7 @@ from datetime import datetime
 from time import time
 import os
 import requests
+import razorpay
 
 app = Flask(__name__)
 CORS(
@@ -102,6 +103,10 @@ def create_order():
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
 SENDGRID_FROM = os.environ.get("SENDGRID_FROM")
 SENDGRID_TO = os.environ.get("SENDGRID_TO", SENDGRID_FROM)
+RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID")
+RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET")
+
+razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 def send_email(name, email, phone, subject, message):
     if not SENDGRID_API_KEY or not SENDGRID_FROM:
@@ -142,6 +147,43 @@ def log_to_csv(name, email, phone, subject, message):
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             name, email, phone, subject, message
         ])
+
+@app.route("/create-razorpay-order", methods=["POST"])
+def create_razorpay_order():
+    data = request.get_json()
+    amount = int(data.get("amount", 0)) * 100  # Convert to paise
+
+    try:
+        rzp_order = razorpay_client.order.create({
+            "amount": amount,
+            "currency": "INR",
+            "payment_capture": 1
+        })
+
+        return jsonify({
+            "success": True,
+            "razorpay_order_id": rzp_order["id"],
+            "amount": amount,
+            "key": RAZORPAY_KEY_ID
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/verify-payment", methods=["POST"])
+def verify_payment():
+    data = request.get_json()
+
+    try:
+        razorpay_client.utility.verify_payment_signature({
+            "razorpay_order_id": data["razorpay_order_id"],
+            "razorpay_payment_id": data["razorpay_payment_id"],
+            "razorpay_signature": data["razorpay_signature"]
+        })
+        return jsonify({"success": True})
+
+    except:
+        return jsonify({"success": False}), 400
 
 @app.route("/send-message", methods=["POST"])
 def send_message():
