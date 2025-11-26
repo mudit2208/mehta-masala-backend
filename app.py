@@ -504,7 +504,7 @@ def create_razorpay_order():
         # Initialize Razorpay client
         client = razorpay.Client(auth=(
             os.getenv("RAZORPAY_KEY_ID"),
-            os.getenv("RAZORPAY_SECRET")
+            os.getenv("RAZORPAY_KEY_SECRET")
         ))
 
         order = client.order.create({
