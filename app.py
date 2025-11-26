@@ -514,6 +514,44 @@ def send_message():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+# =====================================
+# RAZORPAY ORDER CREATION (NEW ROUTE)
+# =====================================
+@app.route("/create-razorpay-order", methods=["POST"])
+def create_razorpay_order():
+    try:
+        data = request.get_json()
+        amount = int(data.get("amount", 0))
+
+        if amount <= 0:
+            return jsonify({"success": False, "error": "Invalid amount"}), 400
+
+        # Razorpay works in paise → convert rupees to paise
+        amount_paise = amount * 100
+
+        # Initialize Razorpay client
+        client = razorpay.Client(auth=(
+            os.getenv("RAZORPAY_KEY_ID"),
+            os.getenv("RAZORPAY_SECRET")
+        ))
+
+        order = client.order.create({
+            "amount": amount_paise,
+            "currency": "INR",
+            "payment_capture": 1
+        })
+
+        return jsonify({
+            "success": True,
+            "order_id": order["id"],
+            "amount": order["amount"],
+            "key": os.getenv("RAZORPAY_KEY_ID")
+        })
+
+    except Exception as e:
+        print("Razorpay Order Error:", e)
+        return jsonify({"success": False, "error": str(e)}), 500
+
 
 # ================================
 # RUN LOCAL
