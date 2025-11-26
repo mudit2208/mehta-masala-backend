@@ -376,34 +376,6 @@ def create_order():
     return jsonify({"success": True, "order_id": order_id})
 
 
-# ----------------------------
-# RAZORPAY ROUTES
-# ----------------------------
-@app.route("/create-razorpay-order", methods=["POST"])
-def create_razorpay_order():
-    data = request.get_json() or {}
-    amount = int(data.get("amount", 0))
-
-    if amount <= 0:
-        return jsonify({"success": False, "error": "Invalid amount"}), 400
-
-    try:
-        rzp_order = razorpay_client.order.create({
-            "amount": amount * 100,
-            "currency": "INR",
-            "payment_capture": 1
-        })
-
-        return jsonify({
-            "success": True,
-            "key": RAZORPAY_KEY_ID,
-            "amount": rzp_order["amount"],
-            "razorpay_order_id": rzp_order["id"]
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
 @app.route("/verify-payment", methods=["POST"])
 def verify_payment():
     data = request.get_json() or {}
