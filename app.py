@@ -14,15 +14,28 @@ import razorpay
 import psycopg2
 import psycopg2.extras
 
+
 app = Flask(__name__)
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = app.make_default_options_response()
+
+        headers = response.headers
+
+        headers["Access-Control-Allow-Origin"] = "*"
+        headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+
+        return response
 SECRET_KEY = "your_secret_key_here_change_it"
 CORS(
     app,
     resources={r"/*": {"origins": "*"}},
-    supports_credentials=True,
     allow_headers=["Content-Type", "Authorization"],
     expose_headers=["Authorization"],
-    methods=["GET", "POST", "OPTIONS"]
+    methods=["GET", "POST", "OPTIONS"],
+    supports_credentials=False
 )
 
 # ================================
@@ -504,6 +517,223 @@ def admin_orders():
 
     return jsonify({"success": True, "orders": orders})
 
+@app.post("/customer/orders")
+def customer_orders():
+    data = request.get_json() or {}
+    phone = data.get("phone")
+    email = data.get("email")
+
+    if not phone and not email:
+        return jsonify({"success": False, "message": "Phone or email required"}), 400
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+        if phone:
+            cur.execute(
+                "SELECT * FROM orders WHERE customer_phone = %s ORDER BY created_at DESC",
+                (phone,)
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM orders WHERE customer_email = %s ORDER BY created_at DESC",
+                (email,)
+            )
+
+        rows = cur.fetchall()
+
+        cur.close()
+        conn.close()
+
+        # Convert to serializable dicts
+        orders = []
+        for row in rows:
+            orders.append({
+                "order_id": row["order_id"],
+                "date": row["created_at"],
+                "name": row["customer_name"],
+                "city": row["customer_city"],
+                "phone": row["customer_phone"],
+                "total": row["total_amount"],
+                "status": row["payment_status"],
+                "method": row["payment_method"]
+            })
+
+        return jsonify({"success": True, "orders": orders})
+
+    except Exception as e:
+        print("Customer order history error:", e)
+        return jsonify({"success": False, "message": "Database error"}), 500
+
+@app.get("/customer/order-details/<order_id>")
+def customer_order_details(order_id):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+        # Get order
+        cur.execute("SELECT * FROM orders WHERE order_id = %s", (order_id,))
+        order = cur.fetchone()
+
+        if not order:
+            return jsonify({"success": False, "message": "Order not found"}), 404
+
+        # Get all items
+        cur.execute("""
+            SELECT slug, name, price, weight, quantity, image
+            FROM order_items WHERE order_ref = %s
+        """, (order["id"],))
+
+        items = cur.fetchall()
+
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            "success": True,
+            "order": {
+                "order_id": order["order_id"],
+                "date": order["created_at"],
+                "name": order["customer_name"],
+                "city": order["customer_city"],
+                "phone": order["customer_phone"],
+                "address": order["customer_address"],
+                "pincode": order["customer_pincode"],
+                "total": order["total_amount"],
+                "payment_status": order["payment_status"],
+                "payment_method": order["payment_method"]
+            },
+            "items": [dict(i) for i in items]
+        })
+
+    except Exception as e:
+        print("Order details error:", e)
+        return jsonify({"success": False, "message": "Database error"}), 500
+
+
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import inch
+from io import BytesIO
+from flask import send_file
+
+
+@app.get("/customer/invoice/<order_id>")
+def download_invoice(order_id):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+        # Fetch order
+        cur.execute("SELECT * FROM orders WHERE order_id=%s", (order_id,))
+        order = cur.fetchone()
+
+        if not order:
+            return jsonify({"success": False, "message": "Order not found"}), 404
+
+        # Fetch items
+        cur.execute("SELECT * FROM order_items WHERE order_ref=%s", (order["id"],))
+        items = cur.fetchall()
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print("Invoice Fetch Error:", e)
+        return jsonify({"success": False, "message": "Database error"}), 500
+
+    # ---------------------------
+    # Build PDF in memory
+    # ---------------------------
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+
+    y = height - 50
+
+    # HEADER
+    pdf.setFont("Helvetica-Bold", 18)
+    pdf.drawString(50, y, "Mehta Masala Gruh Udhyog - Invoice")
+    y -= 30
+
+    pdf.setFont("Helvetica", 12)
+    pdf.drawString(50, y, f"Order ID: {order['order_id']}")
+    y -= 18
+    pdf.drawString(50, y, f"Date: {order['created_at']}")
+    y -= 30
+
+    # CUSTOMER DETAILS
+    pdf.setFont("Helvetica-Bold", 14)
+    pdf.drawString(50, y, "Customer Details")
+    y -= 20
+    pdf.setFont("Helvetica", 12)
+    pdf.drawString(50, y, f"Name: {order['customer_name']}")
+    y -= 16
+    pdf.drawString(50, y, f"Phone: {order['customer_phone']}")
+    y -= 16
+    pdf.drawString(50, y, f"Address: {order['customer_address']}, {order['customer_city']} - {order['customer_pincode']}")
+    y -= 30
+
+    # ITEMS TABLE HEADER
+    pdf.setFont("Helvetica-Bold", 14)
+    pdf.drawString(50, y, "Items")
+    y -= 20
+
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(50, y, "Item")
+    pdf.drawString(200, y, "Qty")
+    pdf.drawString(250, y, "Weight")
+    pdf.drawString(330, y, "Price")
+    pdf.drawString(400, y, "Total")
+    y -= 16
+    pdf.line(50, y, 550, y)
+    y -= 16
+
+    # ITEMS LIST
+    pdf.setFont("Helvetica", 12)
+    subtotal = 0
+
+    for item in items:
+        line_total = item["price"] * item["quantity"]
+        subtotal += line_total
+
+        pdf.drawString(50, y, item["name"])
+        pdf.drawString(200, y, str(item["quantity"]))
+        pdf.drawString(250, y, f"{item['weight']}g")
+        pdf.drawString(330, y, f"₹{item['price']}")
+        pdf.drawString(400, y, f"₹{line_total}")
+        y -= 16
+
+        if y < 100:
+            pdf.showPage()
+            y = height - 50
+
+    # TOTALS
+    y -= 20
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(50, y, f"Subtotal: ₹{subtotal}")
+    y -= 16
+    pdf.drawString(50, y, f"Grand Total: ₹{order['total_amount']}")
+    y -= 16
+    pdf.drawString(50, y, f"Payment Method: {order['payment_method']}")
+    y -= 16
+    pdf.drawString(50, y, f"Payment Status: {order['payment_status']}")
+
+    # FOOTER
+    y -= 40
+    pdf.setFont("Helvetica-Oblique", 11)
+    pdf.drawString(50, y, "Thank you for your purchase!")
+
+    pdf.save()
+
+    buffer.seek(0)
+
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=f"Invoice_{order_id}.pdf",
+        mimetype="application/pdf"
+    )
 
 # ================================
 # RUN LOCAL
