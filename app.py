@@ -494,14 +494,16 @@ def admin_orders():
         cur.execute("SELECT * FROM orders ORDER BY created_at DESC")
         rows = cur.fetchall()
 
-
         cur.close()
         conn.close()
     except Exception as e:
         print("DB error in admin_orders:", e)
         return jsonify({"success": False, "message": "Database error"}), 500
 
-    return jsonify({"success": True, "orders": rows})
+    orders = [dict(r) for r in rows]  # Convert DictRow → dict
+
+    return jsonify({"success": True, "orders": orders})
+
 
 # ================================
 # RUN LOCAL
