@@ -4,3 +4,4 @@ gunicorn
 requests
 razorpay
 psycopg2-binary
+PyJWT
