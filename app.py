@@ -1,15 +1,21 @@
 from flask import Flask, request, jsonify
+from werkzeug.security import generate_password_hash, check_password_hash
+import jwt
+from functools import wraps
+from datetime import datetime, timedelta
 from flask_cors import CORS
 import csv
-from datetime import datetime
 from time import time
 import os
 import requests
 import io
 import base64
 import razorpay
+import psycopg2
+import psycopg2.extras
 
 app = Flask(__name__)
+SECRET_KEY = "your_secret_key_here_change_it"
 CORS(
     app,
     resources={r"/*": {"origins": "*"}},
@@ -33,6 +39,16 @@ LAST_SENT = {}  # contact form spam protection
 ADMIN_DASHBOARD_KEY = os.environ.get("ADMIN_DASHBOARD_KEY", "MehtaMasalaAdmin2025")
 
 
+
+def get_db_connection():
+    return psycopg2.connect(
+        host=os.environ.get("DB_HOST"),
+        database=os.environ.get("DB_NAME"),
+        user=os.environ.get("DB_USER"),
+        password=os.environ.get("DB_PASSWORD"),
+        port=os.environ.get("DB_PORT")
+    )
+
 # ================================
 # HELPERS
 # ================================
@@ -43,123 +59,6 @@ def log_contact_to_csv(name, email, phone, subject, message):
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             name, email, phone, subject, message
         ])
-
-
-def log_order_to_csv(order_id, customer, cart, total, payment_info):
-    with open("orders.csv", "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            order_id,
-            customer.get("name"),
-            customer.get("email"),
-            customer.get("phone"),
-            customer.get("address"),
-            customer.get("city"),
-            customer.get("pincode"),
-            total,
-            payment_info.get("method"),
-            payment_info.get("status"),
-            payment_info.get("razorpay_order_id"),
-            payment_info.get("razorpay_payment_id")
-        ])
-
-STATUS_FILE = "order_status.csv"
-
-def load_order_statuses():
-    """
-    Read shipping statuses from order_status.csv
-    Returns dict: {order_id: status_str}
-    """
-    statuses = {}
-    if not os.path.exists(STATUS_FILE):
-        return statuses
-
-    try:
-        with open(STATUS_FILE, "r", newline="") as f:
-            reader = csv.reader(f)
-            for row in reader:
-                if len(row) < 2:
-                    continue
-                oid, st = row[0], row[1]
-                statuses[oid] = st
-    except Exception as e:
-        print("Error reading order_status.csv:", e)
-
-    return statuses
-
-
-def save_order_statuses(statuses):
-    """
-    Overwrite order_status.csv with current statuses dict.
-    """
-    try:
-        with open(STATUS_FILE, "w", newline="") as f:
-            writer = csv.writer(f)
-            for oid, st in statuses.items():
-                writer.writerow([oid, st])
-    except Exception as e:
-        print("Error writing order_status.csv:", e)
-
-
-def load_orders_from_csv():
-    """
-    Read orders from orders.csv and attach shipping_status from order_status.csv
-    """
-    orders = []
-    if not os.path.exists("orders.csv"):
-        return orders
-
-    # Load shipping statuses once
-    statuses = load_order_statuses()
-
-    try:
-        with open("orders.csv", "r", newline="") as f:
-            reader = csv.reader(f)
-            for row in reader:
-                # row format:
-                # 0: timestamp
-                # 1: order_id
-                # 2: name
-                # 3: email
-                # 4: phone
-                # 5: address
-                # 6: city
-                # 7: pincode
-                # 8: total
-                # 9: payment_method
-                # 10: payment_status
-                # 11: razorpay_order_id
-                # 12: razorpay_payment_id
-                if len(row) < 13:
-                    continue
-
-                oid = row[1]
-                shipping_status = statuses.get(oid, "Pending")
-
-                orders.append({
-                    "created_at": row[0],
-                    "order_id": oid,
-                    "name": row[2],
-                    "email": row[3],
-                    "phone": row[4],
-                    "address": row[5],
-                    "city": row[6],
-                    "pincode": row[7],
-                    "total": row[8],
-                    "payment_method": row[9],
-                    "payment_status": row[10],
-                    "razorpay_order_id": row[11],
-                    "razorpay_payment_id": row[12],
-                    "shipping_status": shipping_status,
-                })
-    except Exception as e:
-        print("Error reading orders.csv:", e)
-
-    # newest first
-    orders.reverse()
-    return orders
-
 
 def send_sendgrid_email(to_emails, subject, html_body, attachments=None):
     """
@@ -356,22 +255,71 @@ def create_order():
     if not cart:
         return jsonify({"success": False, "error": "Cart empty"}), 400
 
+    # Generate order ID
     order_id = "ORD" + str(int(time() * 100))[-8:]
 
-    # Ensure basic payment defaults
+    # Defaults
     payment_info.setdefault("method", "unknown")
     payment_info.setdefault("status", "pending")
     payment_info.setdefault("razorpay_order_id", None)
     payment_info.setdefault("razorpay_payment_id", None)
+    payment_info.setdefault("razorpay_signature", None)
 
-    # 1) Log to CSV file
-    log_order_to_csv(order_id, customer, cart, total, payment_info)
-
-    # 2) Send emails with CSV attachment
+    # Insert into PostgreSQL
     try:
-        send_order_email(order_id, customer, cart, total, payment_info)
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Insert order
+        cur.execute("""
+            INSERT INTO orders (
+                order_id, razorpay_order_id, razorpay_payment_id, razorpay_signature,
+                customer_name, customer_phone, customer_address, customer_city, customer_pincode,
+                payment_method, total_amount, payment_status
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            RETURNING id;
+        """, (
+            order_id,
+            payment_info.get("razorpay_order_id"),
+            payment_info.get("razorpay_payment_id"),
+            payment_info.get("razorpay_signature"),
+            customer.get("name"),
+            customer.get("phone"),
+            customer.get("address"),
+            customer.get("city"),
+            customer.get("pincode"),
+            payment_info.get("method"),
+            int(total),
+            payment_info.get("status")
+        ))
+
+        order_db_id = cur.fetchone()[0]
+
+        # Insert items
+        for item in cart:
+            cur.execute("""
+                INSERT INTO order_items (
+                    order_ref, slug, name, price, weight, quantity, image
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """, (
+                order_db_id,
+                item.get("slug"),
+                item.get("name"),
+                int(item.get("price", 0)),
+                int(item.get("weight", 0) or 0),
+                int(item.get("quantity", 0)),
+                item.get("image")
+            ))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
     except Exception as e:
-        return jsonify({"success": False, "error": f"Email error: {e}"}), 500
+        print("DB error:", e)
+        return jsonify({"success": False, "error": "Database write error"}), 500
 
     return jsonify({"success": True, "order_id": order_id})
 
@@ -389,45 +337,6 @@ def verify_payment():
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 400
-
-@app.route("/admin/orders", methods=["GET"])
-def admin_get_orders():
-    """
-    Simple admin API endpoint to fetch all orders from CSV.
-    Protected by a query parameter ?key=ADMIN_DASHBOARD_KEY.
-    """
-    key = request.args.get("key")
-    if key != ADMIN_DASHBOARD_KEY:
-        return jsonify({"success": False, "error": "Unauthorized"}), 401
-
-    orders = load_orders_from_csv()
-    return jsonify({"success": True, "orders": orders})
-
-@app.route("/admin/update-status", methods=["POST"])
-def admin_update_status():
-    """
-    Update shipping status for an order.
-    Body JSON: { key: ADMIN_DASHBOARD_KEY, order_id: "...", status: "Pending/Shipped/Delivered" }
-    """
-    data = request.get_json() or {}
-    key = data.get("key")
-    if key != ADMIN_DASHBOARD_KEY:
-        return jsonify({"success": False, "error": "Unauthorized"}), 401
-
-    order_id = data.get("order_id")
-    new_status = data.get("status")
-
-    allowed_statuses = {"Pending", "Shipped", "Delivered"}
-    if not order_id or new_status not in allowed_statuses:
-        return jsonify({"success": False, "error": "Invalid order_id or status"}), 400
-
-    statuses = load_order_statuses()
-    statuses[order_id] = new_status
-    save_order_statuses(statuses)
-
-    return jsonify({"success": True})
-
-
 
 # ----------------------------
 # CONTACT FORM ROUTES (unchanged)
@@ -524,6 +433,74 @@ def create_razorpay_order():
         print("Razorpay Order Error:", e)
         return jsonify({"success": False, "error": str(e)}), 500
 
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        token = request.headers.get("Authorization")
+        if not token:
+            return jsonify({"success": False, "message": "Missing token"}), 401
+        try:
+            decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+            request.admin_id = decoded["admin_id"]
+        except:
+            return jsonify({"success": False, "message": "Invalid or expired token"}), 401
+        return fn(*args, **kwargs)
+    return wrapper
+
+@app.post("/admin/login")
+def admin_login():
+    data = request.get_json() or {}
+    email = data.get("email")
+    password = data.get("password")
+
+    if not email or not password:
+        return jsonify({"success": False, "message": "Email and password required"}), 400
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+        cur.execute("SELECT * FROM admin_users WHERE email=%s", (email,))
+        admin = cur.fetchone()
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print("DB error in admin_login:", e)
+        return jsonify({"success": False, "message": "Database error"}), 500
+
+    if not admin:
+        return jsonify({"success": False, "message": "Invalid credentials"}), 401
+
+    if not check_password_hash(admin["password_hash"], password):
+        return jsonify({"success": False, "message": "Invalid credentials"}), 401
+
+    token = jwt.encode(
+        {"admin_id": admin["id"], "exp": datetime.utcnow() + timedelta(hours=12)},
+        SECRET_KEY,
+        algorithm="HS256"
+    )
+
+    return jsonify({"success": True, "token": token})
+
+@app.get("/admin/orders")
+@admin_required
+def admin_orders():
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+        cur.execute("SELECT * FROM orders ORDER BY created_at DESC")
+        rows = cur.fetchall()
+
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print("DB error in admin_orders:", e)
+        return jsonify({"success": False, "message": "Database error"}), 500
+
+    return jsonify({"success": True, "orders": rows})
 
 # ================================
 # RUN LOCAL
